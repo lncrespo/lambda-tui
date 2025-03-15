@@ -12,6 +12,10 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 )
 
+type lambdaDetailMsg struct {
+	info lambdaInfo
+}
+
 // A log stream message is being sent to the model containing
 // log stream names and their respective last event timestamp of the selected log group
 //
@@ -63,7 +67,7 @@ func (l logStreamItem) Title() string {
 }
 
 func (l logStreamItem) Description() string {
-	return ""
+	return l.lastEventTimestamp
 }
 
 func (l logStreamItem) FilterValue() string {
@@ -103,7 +107,7 @@ func run() error {
 	model := newModel(reqCh, credentials.AccountID, items)
 
 	p := tea.NewProgram(model, tea.WithAltScreen(), tea.WithMouseCellMotion())
-	go handleRequests(p, cloudwatchClient, reqCh)
+	go handleRequests(p, cloudwatchClient, lambdaClient, reqCh)
 
 	if _, err := p.Run(); err != nil {
 		return err
@@ -112,7 +116,7 @@ func run() error {
 	return nil
 }
 
-func handleRequests(p *tea.Program, cwClient *cloudwatchlogs.Client, reqCh <-chan interface{}) {
+func handleRequests(p *tea.Program, cwClient *cloudwatchlogs.Client, lambdaClient *lambda.Client, reqCh <-chan interface{}) {
 	for {
 		msg := <-reqCh
 		switch msg := msg.(type) {
@@ -135,6 +139,15 @@ func handleRequests(p *tea.Program, cwClient *cloudwatchlogs.Client, reqCh <-cha
 			}
 
 			p.Send(logEventMsg{events: events})
+
+		case lambdaDetailReq:
+			lambdaInfo, err := getLambdaInfo(context.Background(), lambdaClient, msg.name)
+			if err != nil {
+				p.Send(errMsg{err})
+
+				continue
+			}
+			p.Send(lambdaDetailMsg{info: lambdaInfo})
 		}
 	}
 }

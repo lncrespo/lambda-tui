@@ -15,11 +15,13 @@ import (
 type model struct {
 	accountId       string
 	activeView      string
+	activeLambda    string
 	activeLogGroup  string
 	activeLogStream string
 	err             string
 	loading         bool
 	lambdas         list.Model
+	lambdaDetail    viewport.Model
 	logStreams      list.Model
 	logEvents       viewport.Model
 	spinner         spinner.Model
@@ -29,14 +31,31 @@ type model struct {
 }
 
 const (
-	viewLambda    = "lambda"
-	viewLogStream = "logStream"
-	viewLogEvent  = "logEvent"
+	viewLambda       = "lambda"
+	viewLambdaDetail = "lambdadetail"
+	viewLogStream    = "logStream"
+	viewLogEvent     = "logEvent"
 )
 
 var (
-	logEventStyle          = lipgloss.NewStyle().Padding(1, 0)
-	logEventTimestampStyle = logEventStyle.PaddingRight(2).Foreground(lipgloss.Color("#fcba03"))
+	logEventStyle              = lipgloss.NewStyle().PaddingBottom(1)
+	logEventTimestampStyle     = logEventStyle.PaddingRight(2).Foreground(lipgloss.Color("#fcba03"))
+	lambdaDetailFieldNameStyle = lipgloss.
+					NewStyle().
+					Bold(true).
+					Background(lipgloss.Color("#192a4a")).
+					PaddingLeft(2).
+					PaddingRight(2)
+
+	lambdaDetailFieldValueStyle = lipgloss.NewStyle().
+					Background(lipgloss.Color("235")).
+					PaddingLeft(2).
+					PaddingRight(2)
+
+	lambdaDetailTitleStyle = lipgloss.NewStyle().
+				Bold(true).
+				MarginLeft(1).
+				AlignHorizontal(lipgloss.Left)
 )
 
 type logStreamReq struct {
@@ -46,6 +65,10 @@ type logStreamReq struct {
 type logEventReq struct {
 	logGroup  string
 	logStream string
+}
+
+type lambdaDetailReq struct {
+	name string
 }
 
 var (
@@ -73,12 +96,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.logStreams.SetSize(msg.Width-h, msg.Height-v)
 		m.logEvents.Width = msg.Width
 		m.logEvents.Height = msg.Height
+		m.lambdaDetail.Width = msg.Width
+		m.lambdaDetail.Height = msg.Height
+
+	case lambdaDetailMsg:
+		m.onRcvLambdaDetailMsg(msg)
 
 	case logStreamMsg:
-		m.handleLogStreamMsg(msg)
+		m.onRcvLogStreamMsg(msg)
 
 	case logEventMsg:
-		m.handleLogEventMsg(msg)
+		m.onRcvLogEventMsg(msg)
 
 	case errMsg:
 		m.err = wrapString(msg.err.Error(), m.winWidth*7/10)
@@ -96,6 +124,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch m.activeView {
 	case viewLambda:
 		return m.viewLambdaUpdate(msg)
+	case viewLambdaDetail:
+		return m.viewLambdaDetailUpdate(msg)
 	case viewLogStream:
 		return m.viewLogStreamUpdate(msg)
 	case viewLogEvent:
@@ -105,34 +135,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	panic("unknown update function for view " + m.activeView)
 }
 
-func (m model) View() string {
-	if m.err != "" {
-		return lipgloss.Place(m.winWidth, m.winHeight, lipgloss.Center, lipgloss.Center, m.err)
-	}
-
-	if m.loading {
-		return lipgloss.Place(m.winWidth, m.winHeight, lipgloss.Center, lipgloss.Center, m.spinner.View())
-	}
-
-	switch m.activeView {
-	case viewLambda:
-		return m.lambdas.View()
-	case viewLogStream:
-		return m.logStreams.View()
-	case viewLogEvent:
-		return m.logEvents.View()
-	default:
-		return m.lambdas.View()
-	}
-}
-
 func (m model) viewErrUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		if msg.String() == "enter" || msg.String() == "esc" {
-			m.err = ""
-			m.loading = false
-		}
+	if msg, ok := msg.(tea.KeyMsg); ok && (msg.String() == "enter" || msg.String() == "esc") {
+		m.err = ""
+		m.loading = false
 	}
 
 	return m, nil
@@ -142,18 +148,44 @@ func (m model) viewLambdaUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.lambdas, cmd = m.lambdas.Update(msg)
 
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	selectedItem := lambdaItem{}
+	hasSelectedItem := false
+	if i, ok := m.lambdas.SelectedItem().(lambdaItem); ok {
+		selectedItem = i
+		hasSelectedItem = true
+	}
+
+	if msg, ok := msg.(tea.KeyMsg); ok {
 		switch msg.String() {
+		case "enter":
+			if !hasSelectedItem {
+				break
+			}
+
+			if selectedItem.name == m.activeLambda {
+				m.activeView = viewLambdaDetail
+				cmd = nil
+				break
+			}
+
+			select {
+			case m.reqCh <- lambdaDetailReq{name: selectedItem.name}:
+				m.loading = true
+				cmd = m.spinner.Tick
+				m.activeLambda = selectedItem.name
+			default:
+			}
 		case "l":
-			if i, ok := m.lambdas.SelectedItem().(lambdaItem); ok {
-				select {
-				case m.reqCh <- logStreamReq{logGroup: i.logGroup}:
-					m.activeLogGroup = i.logGroup
-					m.loading = true
-					cmd = m.spinner.Tick
-				default:
-				}
+			if !hasSelectedItem {
+				break
+			}
+
+			select {
+			case m.reqCh <- logStreamReq{logGroup: selectedItem.logGroup}:
+				m.activeLogGroup = selectedItem.logGroup
+				m.loading = true
+				cmd = m.spinner.Tick
+			default:
 			}
 		case "esc":
 			m.lambdas.ResetFilter()
@@ -163,12 +195,28 @@ func (m model) viewLambdaUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
+func (m model) viewLambdaDetailUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	if msg, ok := msg.(tea.KeyMsg); ok && msg.String() == "esc" {
+		m.activeView = viewLambda
+		cmd = nil
+	}
+
+	return m, cmd
+}
+
 func (m model) viewLogStreamUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.logStreams, _ = m.logStreams.Update(msg)
 
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	selectedItem := logStreamItem{}
+	hasSelectedItem := false
+	if i, ok := m.logStreams.SelectedItem().(logStreamItem); ok {
+		selectedItem = i
+		hasSelectedItem = true
+	}
+
+	if msg, ok := msg.(tea.KeyMsg); ok {
 		switch msg.String() {
 		case "esc":
 			if m.logStreams.FilterValue() == "" {
@@ -178,23 +226,25 @@ func (m model) viewLogStreamUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.logStreams.ResetFilter()
 			cmd = nil
 		case "enter":
-			if i, ok := m.logStreams.SelectedItem().(logStreamItem); ok {
-				if i.name == m.activeLogStream {
-					m.activeView = viewLogEvent
+			if !hasSelectedItem {
+				break
+			}
 
-					break
-				}
+			if selectedItem.name == m.activeLogStream {
+				m.activeView = viewLogEvent
 
-				select {
-				case m.reqCh <- logEventReq{
-					logGroup:  m.activeLogGroup,
-					logStream: i.name,
-				}:
-					m.activeLogStream = i.name
-					m.loading = true
-					cmd = m.spinner.Tick
-				default:
-				}
+				break
+			}
+
+			select {
+			case m.reqCh <- logEventReq{
+				logGroup:  m.activeLogGroup,
+				logStream: selectedItem.name,
+			}:
+				m.activeLogStream = selectedItem.name
+				m.loading = true
+				cmd = m.spinner.Tick
+			default:
 			}
 		case "r":
 			select {
@@ -213,14 +263,11 @@ func (m model) viewLogEventUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
 	m.logEvents, cmd = m.logEvents.Update(msg)
 
-	switch msg := msg.(type) {
-	case tea.KeyMsg:
-		switch msg.String() {
-		case "esc":
-			m.activeView = viewLogStream
-			cmd = nil
-		}
+	if msg, ok := msg.(tea.KeyMsg); ok && msg.String() == "esc" {
+		m.activeView = viewLogStream
+		cmd = nil
 	}
+
 	return m, cmd
 }
 
@@ -230,11 +277,83 @@ func (m model) viewLoadingUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, cmd
 }
 
-func (m *model) handleLogStreamMsg(msg logStreamMsg) {
+func (m model) View() string {
+	if m.err != "" {
+		return lipgloss.Place(m.winWidth, m.winHeight, lipgloss.Center, lipgloss.Center, m.err)
+	}
+
+	if m.loading {
+		return lipgloss.Place(m.winWidth, m.winHeight, lipgloss.Center, lipgloss.Center, m.spinner.View())
+	}
+
+	switch m.activeView {
+	case viewLambda:
+		return m.lambdas.View()
+	case viewLambdaDetail:
+		return m.lambdaDetail.View()
+	case viewLogStream:
+		return m.logStreams.View()
+	case viewLogEvent:
+		return m.logEvents.View()
+	default:
+		return m.lambdas.View()
+	}
+}
+
+func (m *model) onRcvLambdaDetailMsg(msg lambdaDetailMsg) {
+	generalInfoRows := [][]string{
+		{"ARN", msg.info.arn},
+		{"Name", msg.info.name},
+		{"Last Modified", msg.info.lastModified},
+		{"Runtime", msg.info.runtime},
+		{"Architecture", msg.info.arch},
+		{"Memory Size", fmt.Sprintf("%d MB", msg.info.memory)},
+		{"Ephemeral Storage", fmt.Sprintf("%d MB", msg.info.ephemeralStorage)},
+		{"Timeout", fmt.Sprintf("%d seconds", msg.info.timeout)},
+	}
+
+	generalInfo := table.
+		New().
+		Border(lipgloss.HiddenBorder()).
+		StyleFunc(lambdaDetailTableStyleFunc).
+		Width(m.logEvents.Width).
+		Rows(generalInfoRows...)
+
+	envVars := table.
+		New().
+		Border(lipgloss.HiddenBorder()).
+		StyleFunc(lambdaDetailTableStyleFunc).
+		Width(m.logEvents.Width).
+		Rows(msg.info.envVars...)
+
+	tags := table.
+		New().
+		Border(lipgloss.HiddenBorder()).
+		StyleFunc(lambdaDetailTableStyleFunc).
+		Width(m.logEvents.Width).
+		Rows(msg.info.tags...)
+
+	content := lipgloss.JoinVertical(
+		0,
+		lambdaDetailTitleStyle.Render("General"),
+		generalInfo.Render(),
+		lambdaDetailTitleStyle.Render("Environment Variables"),
+		envVars.Render(),
+		lambdaDetailTitleStyle.Render("Tags"),
+		tags.Render(),
+	)
+	m.lambdaDetail.SetContent(content)
+	m.lambdaDetail.Style = m.lambdaDetail.Style.Align(lipgloss.Center)
+	m.activeView = viewLambdaDetail
+	m.loading = false
+}
+
+func (m *model) onRcvLogStreamMsg(msg logStreamMsg) {
 	listItems := make([]list.Item, 0, len(msg.items))
 
 	for _, item := range msg.items {
-		listItems = append(listItems, logStreamItem{item[0], item[1]})
+		itemDescription := fmt.Sprintf("Last Event: %s", item[1])
+		listItems = append(listItems, logStreamItem{item[0], itemDescription})
 	}
 
 	m.logStreams.SetItems(listItems)
@@ -247,7 +366,7 @@ func (m *model) handleLogStreamMsg(msg logStreamMsg) {
 	m.loading = false
 }
 
-func (m *model) handleLogEventMsg(msg logEventMsg) {
+func (m *model) onRcvLogEventMsg(msg logEventMsg) {
 	t := table.
 		New().
 		Border(lipgloss.HiddenBorder()).
@@ -258,7 +377,7 @@ func (m *model) handleLogEventMsg(msg logEventMsg) {
 			}
 
 			if row%2 == 1 {
-				style = style.Background(lipgloss.Color("235"))
+				style = style.Background(lipgloss.Color("236"))
 			}
 			return style
 		}).
@@ -270,17 +389,33 @@ func (m *model) handleLogEventMsg(msg logEventMsg) {
 	m.loading = false
 }
 
+func lambdaDetailTableStyleFunc(row, col int) lipgloss.Style {
+	style := lambdaDetailFieldValueStyle
+
+	switch {
+	case col == 0 && row%2 == 0:
+		style = lambdaDetailFieldNameStyle.Background(lipgloss.Color("#20355c"))
+	case col == 0 && row%2 == 1:
+		style = lambdaDetailFieldNameStyle
+	case col == 1 && row%2 == 0:
+		style = lambdaDetailFieldValueStyle.Background(lipgloss.Color("236"))
+	case col == 1 && row%2 == 1:
+		style = lambdaDetailFieldValueStyle
+	}
+
+	return style
+}
+
 func newModel(reqCh chan interface{}, accountId string, lambdas []list.Item) model {
-	simpleListDelegate := list.NewDefaultDelegate()
-	simpleListDelegate.ShowDescription = false
 	model := model{
-		accountId:  accountId,
-		reqCh:      reqCh,
-		lambdas:    list.New(lambdas, list.NewDefaultDelegate(), 0, 0),
-		logStreams: list.New(nil, simpleListDelegate, 0, 0),
-		logEvents:  viewport.New(0, 0),
-		spinner:    spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(spinnerStyle)),
-		activeView: viewLambda,
+		accountId:    accountId,
+		reqCh:        reqCh,
+		lambdas:      list.New(lambdas, list.NewDefaultDelegate(), 0, 0),
+		logStreams:   list.New(nil, list.NewDefaultDelegate(), 0, 0),
+		logEvents:    viewport.New(0, 0),
+		lambdaDetail: viewport.New(0, 0),
+		spinner:      spinner.New(spinner.WithSpinner(spinner.Dot), spinner.WithStyle(spinnerStyle)),
+		activeView:   viewLambda,
 	}
 	model.lambdas.Title = fmt.Sprintf("Viewing Lambdas - Account ID: %s", accountId)
 	model.lambdas.KeyMap.NextPage = key.NewBinding(key.WithKeys("ctrl+d"), key.WithHelp("ctrl+d", "next page"))

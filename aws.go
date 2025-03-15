@@ -10,6 +10,20 @@ import (
 	"github.com/charmbracelet/bubbles/list"
 )
 
+type lambdaInfo struct {
+	arn              string
+	name             string
+	description      string
+	lastModified     string
+	runtime          string
+	arch             string
+	memory           uint32
+	ephemeralStorage uint32
+	timeout          uint32
+	envVars          [][]string
+	tags             [][]string
+}
+
 func getLambdaFunctions(ctx context.Context, c *lambda.Client) ([]list.Item, error) {
 	res, err := c.ListFunctions(ctx, nil)
 	if err != nil {
@@ -36,6 +50,75 @@ func getLambdaFunctions(ctx context.Context, c *lambda.Client) ([]list.Item, err
 	}
 
 	return functions, nil
+}
+
+func getLambdaInfo(ctx context.Context, c *lambda.Client, name string) (lambdaInfo, error) {
+	res, err := c.GetFunction(ctx, &lambda.GetFunctionInput{
+		FunctionName: &name,
+	})
+	if err != nil {
+		return lambdaInfo{}, err
+	}
+
+	if res.Configuration == nil {
+		return lambdaInfo{}, fmt.Errorf("received nil function config")
+	}
+
+	fnInfo := lambdaInfo{
+		arn:              "invalid arn",
+		name:             name,
+		description:      "invalid description",
+		lastModified:     "invalid last modified date",
+		runtime:          "invalid runtime",
+		arch:             "invalid arch",
+		memory:           0,
+		ephemeralStorage: 0,
+		timeout:          0,
+		envVars:          [][]string{},
+		tags:             [][]string{},
+	}
+
+	if len(res.Configuration.Architectures) > 0 {
+		fnInfo.arch = string(res.Configuration.Architectures[0])
+	}
+
+	if res.Configuration.FunctionArn != nil {
+		fnInfo.arn = *res.Configuration.FunctionArn
+	}
+
+	if res.Configuration.Description != nil {
+		fnInfo.description = *res.Configuration.Description
+	}
+
+	if res.Configuration.MemorySize != nil {
+		fnInfo.memory = uint32(*res.Configuration.MemorySize)
+	}
+
+	if res.Configuration.EphemeralStorage != nil && res.Configuration.EphemeralStorage.Size != nil {
+		fnInfo.ephemeralStorage = uint32(*res.Configuration.EphemeralStorage.Size)
+	}
+
+	if res.Configuration.LastModified != nil {
+		fnInfo.lastModified = *res.Configuration.LastModified
+	}
+
+	if res.Configuration.Timeout != nil {
+		fnInfo.timeout = uint32(*res.Configuration.Timeout)
+	}
+
+	fnInfo.runtime = string(res.Configuration.Runtime)
+
+	fnInfo.envVars = make([][]string, 0, len(res.Configuration.Environment.Variables))
+	for k, v := range res.Configuration.Environment.Variables {
+		fnInfo.envVars = append(fnInfo.envVars, []string{k, v})
+	}
+
+	fnInfo.tags = make([][]string, 0, len(res.Tags))
+	for k, v := range res.Tags {
+		fnInfo.tags = append(fnInfo.tags, []string{k, v})
+	}
+
+	return fnInfo, nil
 }
 
 func getLogStreams(ctx context.Context, c *cloudwatchlogs.Client, logGroup string) ([][]string, error) {
