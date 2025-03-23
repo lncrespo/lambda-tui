@@ -1,6 +1,8 @@
 package main
 
-import "strings"
+import (
+	"strings"
+)
 
 func wrapString(str string, length int) string {
 	var b strings.Builder

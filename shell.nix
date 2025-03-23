@@ -4,5 +4,6 @@
       go
       gopls
       awscli2
+      gnumake
     ];
   }

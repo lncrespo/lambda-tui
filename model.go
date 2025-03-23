@@ -38,8 +38,11 @@ const (
 )
 
 var (
-	logEventStyle              = lipgloss.NewStyle().PaddingBottom(1)
-	logEventTimestampStyle     = logEventStyle.PaddingRight(2).Foreground(lipgloss.Color("#fcba03"))
+	logEventStyle          = lipgloss.NewStyle().AlignVertical(lipgloss.Center)
+	logEventTimestampStyle = logEventStyle.Bold(true).
+				Padding(1).
+				Foreground(lipgloss.Color("#3275C4"))
+
 	lambdaDetailFieldNameStyle = lipgloss.
 					NewStyle().
 					Bold(true).
@@ -288,15 +291,15 @@ func (m model) View() string {
 
 	switch m.activeView {
 	case viewLambda:
-		return m.lambdas.View()
+		return lipgloss.Place(m.winWidth, m.winHeight, lipgloss.Center, lipgloss.Center, m.lambdas.View())
 	case viewLambdaDetail:
-		return m.lambdaDetail.View()
+		return lipgloss.Place(m.winWidth, m.winHeight, lipgloss.Center, lipgloss.Center, m.lambdaDetail.View())
 	case viewLogStream:
-		return m.logStreams.View()
+		return lipgloss.Place(m.winWidth, m.winHeight, lipgloss.Center, lipgloss.Center, m.logStreams.View())
 	case viewLogEvent:
 		return m.logEvents.View()
 	default:
-		return m.lambdas.View()
+		return lipgloss.Place(m.winWidth, m.winHeight, lipgloss.Center, lipgloss.Center, m.lambdas.View())
 	}
 }
 
@@ -423,6 +426,7 @@ func newModel(reqCh chan interface{}, accountId string, lambdas []list.Item) mod
 	model.lambdas.AdditionalShortHelpKeys = func() []key.Binding {
 		return []key.Binding{
 			key.NewBinding(key.WithKeys("i"), key.WithHelp("i", "invoke")),
+			key.NewBinding(key.WithKeys("enter"), key.WithHelp("enter", "details")),
 		}
 	}
 

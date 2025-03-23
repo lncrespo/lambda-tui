@@ -77,14 +77,16 @@ func (l logStreamItem) FilterValue() string {
 func main() {
 	f, err := tea.LogToFile("debug.log", "debug")
 	if err != nil {
-		fmt.Println("fatal:", err)
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
 		os.Exit(1)
 	}
 	defer f.Close()
 
 	err = run()
 	if err != nil {
-		panic(err)
+		log.Println(err)
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
 	}
 }
 
@@ -133,6 +135,7 @@ func handleRequests(p *tea.Program, cwClient *cloudwatchlogs.Client, lambdaClien
 		case logEventReq:
 			events, err := getLogEvents(context.Background(), cwClient, msg.logGroup, msg.logStream)
 			if err != nil {
+				log.Printf("[Error] %v", err)
 				p.Send(errMsg{err})
 
 				continue
@@ -143,6 +146,7 @@ func handleRequests(p *tea.Program, cwClient *cloudwatchlogs.Client, lambdaClien
 		case lambdaDetailReq:
 			lambdaInfo, err := getLambdaInfo(context.Background(), lambdaClient, msg.name)
 			if err != nil {
+				log.Printf("[Error] %v", err)
 				p.Send(errMsg{err})
 
 				continue

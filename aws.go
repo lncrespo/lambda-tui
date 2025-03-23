@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
@@ -182,7 +183,7 @@ func getLogEvents(ctx context.Context, c *cloudwatchlogs.Client, logGroup string
 
 			logEvents = append(logEvents, []string{
 				time.Unix(*event.Timestamp/1000, 0).Format(time.RFC1123),
-				*event.Message,
+				strings.TrimSuffix(*event.Message, "\n"),
 			})
 		}
 
