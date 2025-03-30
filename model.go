@@ -361,8 +361,12 @@ func (m *model) onRcvLogStreamMsg(msg logStreamMsg) {
 	listItems := make([]list.Item, 0, len(msg.items))
 
 	for _, item := range msg.items {
-		itemDescription := fmt.Sprintf("Last Event: %s", item[1])
-		listItems = append(listItems, logStreamItem{item[0], itemDescription})
+		itemDescription := fmt.Sprintf("Last Event: %s", item.lastEventTimestamp)
+		if item.expired {
+			itemDescription = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Render("Expired")
+		}
+
+		listItems = append(listItems, logStreamItem{item.name, itemDescription})
 	}
 
 	m.logStreams.SetItems(listItems)

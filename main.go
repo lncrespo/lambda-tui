@@ -16,14 +16,8 @@ type lambdaDetailMsg struct {
 	info lambdaInfo
 }
 
-// A log stream message is being sent to the model containing
-// log stream names and their respective last event timestamp of the selected log group
-//
-//	{
-//		{log stream name, last event timestamp},
-//	}
 type logStreamMsg struct {
-	items [][]string
+	items []logStream
 }
 
 // A log event message is being sent to the model containing

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs"
+	"github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs/types"
 	"github.com/aws/aws-sdk-go-v2/service/lambda"
 	"github.com/charmbracelet/bubbles/list"
 )
@@ -23,6 +24,12 @@ type lambdaInfo struct {
 	timeout          uint32
 	envVars          [][]string
 	tags             [][]string
+}
+
+type logStream struct {
+	name               string
+	lastEventTimestamp string
+	expired            bool
 }
 
 func getLambdaFunctions(ctx context.Context, c *lambda.Client) ([]list.Item, error) {
@@ -126,24 +133,44 @@ func getLambdaInfo(ctx context.Context, c *lambda.Client, name string) (lambdaIn
 	return fnInfo, nil
 }
 
-func getLogStreams(ctx context.Context, c *cloudwatchlogs.Client, logGroup string) ([][]string, error) {
+func getLogStreams(ctx context.Context, c *cloudwatchlogs.Client, logGroup string) ([]logStream, error) {
+	logGroupRes, err := c.DescribeLogGroups(ctx, &cloudwatchlogs.DescribeLogGroupsInput{
+		LogGroupNamePrefix: &logGroup,
+	})
+
+	if len(logGroupRes.LogGroups) == 0 {
+		return nil, fmt.Errorf("log group not found")
+	}
+
+	retention := int64(-1)
+	if logGroupRes.LogGroups[0].RetentionInDays != nil {
+		retention = int64(*logGroupRes.LogGroups[0].RetentionInDays) * 86400000
+	}
+
 	res, err := c.DescribeLogStreams(ctx, &cloudwatchlogs.DescribeLogStreamsInput{
 		LogGroupName: &logGroup,
 		Descending:   ptr(true),
+		OrderBy:      types.OrderByLastEventTime,
 	})
 	if err != nil {
 		return nil, err
 	}
 
-	streams := make([][]string, 0, len(res.LogStreams))
+	streams := make([]logStream, 0, len(res.LogStreams))
 	requests := 1
 	maxRequests := 10
 
 	for {
 		for _, stream := range res.LogStreams {
-			streams = append(streams, []string{
-				*stream.LogStreamName,
-				time.Unix(*stream.LastEventTimestamp/1000, 0).Format(time.RFC1123),
+			expired := false
+			if stream.LastEventTimestamp != nil {
+				expired = time.UnixMilli(*stream.LastEventTimestamp + retention).Before(time.Now())
+			}
+
+			streams = append(streams, logStream{
+				name:               *stream.LogStreamName,
+				lastEventTimestamp: time.Unix(*stream.LastEventTimestamp/1000, 0).Format(time.RFC1123),
+				expired:            expired,
 			})
 		}
 
@@ -155,6 +182,7 @@ func getLogStreams(ctx context.Context, c *cloudwatchlogs.Client, logGroup strin
 			LogGroupName: &logGroup,
 			Descending:   ptr(true),
 			NextToken:    res.NextToken,
+			OrderBy:      types.OrderByLastEventTime,
 		})
 		if err != nil {
 			return nil, err
