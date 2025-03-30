@@ -109,14 +109,18 @@ func getLambdaInfo(ctx context.Context, c *lambda.Client, name string) (lambdaIn
 
 	fnInfo.runtime = string(res.Configuration.Runtime)
 
-	fnInfo.envVars = make([][]string, 0, len(res.Configuration.Environment.Variables))
-	for k, v := range res.Configuration.Environment.Variables {
-		fnInfo.envVars = append(fnInfo.envVars, []string{k, v})
-	}
-
 	fnInfo.tags = make([][]string, 0, len(res.Tags))
 	for k, v := range res.Tags {
 		fnInfo.tags = append(fnInfo.tags, []string{k, v})
+	}
+
+	if res.Configuration.Environment == nil {
+		return fnInfo, nil
+	}
+
+	fnInfo.envVars = make([][]string, 0, len(res.Configuration.Environment.Variables))
+	for k, v := range res.Configuration.Environment.Variables {
+		fnInfo.envVars = append(fnInfo.envVars, []string{k, v})
 	}
 
 	return fnInfo, nil
