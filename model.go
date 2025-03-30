@@ -149,8 +149,14 @@ func (m model) viewErrUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m model) viewLambdaUpdate(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	m.lambdas, cmd = m.lambdas.Update(msg)
 
+	if m.lambdas.FilterState() == list.Filtering {
+		m.lambdas, cmd = m.lambdas.Update(msg)
+
+		return m, cmd
+	}
+
+	m.lambdas, cmd = m.lambdas.Update(msg)
 	selectedItem := lambdaItem{}
 	hasSelectedItem := false
 	if i, ok := m.lambdas.SelectedItem().(lambdaItem); ok {
